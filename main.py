@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
-from params import Us, Ub, UL, F_, m_dot, Cp, Ac, n_collectors
+from params import F_, m_dot, Cp, Ac, n_collectors
+from heat_loss_components import calculate_UL
 
 def main():
     df = pd.read_csv("solar_data.csv")
@@ -10,18 +11,19 @@ def main():
     S_list = df["S"].values
     Ti_list = df["Ti"].values
 
-    mf = (m_dot * Cp) / (Ac * UL * F_)
-    Fpp = mf * (1 - np.exp(-1 / mf))
-    FR = F_ * Fpp
-
-    print(f"Collector flow factor (F'') = {Fpp:.3f}")
-    print(f"Heat removal factor (F_R)   = {FR:.3f}\n")
-
     results = []
 
     q_u_total = 0.0
     IT_total = 0.0
-    S_total = 0.0  # Para acumular radiación absorbida
+
+    # Parámetros físicos reales basados en materiales indicados
+
+    h_conv = 5.0                  # Coeficiente convección natural en aire [W/m²·K], rango típico 5-25, tomamos bajo para calma
+    epsilon_plate = 0.90          # Emisividad pintura negro mate (placa absorbente)
+    epsilon_glass = 0.85          # Emisividad policarbonato alveolar
+    k_ins = 0.03                  # Conductividad térmica poliestireno expandido (aislante)
+    d_ins = 0.0254                # Espesor del aislamiento poliestireno expandido, 2.54 cm (1 pulgada)
+
 
     for i in range(len(df)):
         hour = int(df["Hour"][i])
@@ -30,9 +32,16 @@ def main():
         S = S_list[i]
         Ti = Ti_list[i]
 
-        loss_surface = Us * (Ti - Ta) * 3600 / 1e6  # MJ/m²·h
-        loss_bottom = Ub * (Ti - Ta) * 3600 / 1e6   # MJ/m²·h
-        loss_total = loss_surface + loss_bottom
+        Tp = (Ti + Ta) / 2  # estimación para temperatura de la placa
+        UL = calculate_UL(Tp, Ta, h_conv, epsilon_plate, epsilon_glass, k_ins, d_ins)
+
+        print(f"Hour {hour}: UL = {UL:.2f} W/m²K")  # Debug: mostrar UL por hora
+
+        mf = (m_dot * Cp) / (Ac * UL * F_)
+        Fpp = mf * (1 - np.exp(-1 / mf))
+        FR = F_ * Fpp
+
+        loss_total = UL * (Ti - Ta) * 3600 / 1e6  # MJ/m²·h
 
         if S <= loss_total:
             q_u = 0.0
@@ -43,48 +52,39 @@ def main():
 
         q_u_total += q_u
         IT_total += IT
-        S_total += S
 
         results.append({
             "Hour": f"{hour}:00-{hour+1}:00",
-            "Loss Surface Us [MJ/m²·h]": round(loss_surface, 3),
-            "Loss Bottom Ub [MJ/m²·h]": round(loss_bottom, 3),
-            "Loss Total UL [MJ/m²·h]": round(loss_total, 3),
+            "UL_total [W/m²K]": round(UL, 2),
+            "Loss Total [MJ/m²·h]": round(loss_total, 3),
             "q_u [MJ/m²·h]": round(q_u, 3),
             "Efficiency η": round(eta, 3)
         })
 
+    # Guardar resultados horarios como CSV
     pd.DataFrame(results).to_csv("results.csv", index=False)
 
+    # Resumen final
     eta_day = q_u_total / IT_total if IT_total > 0 else 0
     Qu = q_u_total * Ac  # MJ por colector
     Qu_total = Qu * n_collectors
 
-    E_disp_incident = IT_total * Ac    # Energía solar incidente total (MJ)
-    E_disp_absorbed = S_total * Ac     # Energía térmica absorbida (MJ)
+    E_disp = IT_total * Ac  # MJ disponibles para un colector
+    E_disp_total = E_disp * n_collectors  # para el arreglo completo
 
-    eta_global = Qu / E_disp_absorbed if E_disp_absorbed > 0 else 0
-    eta_global_total = Qu_total / (E_disp_absorbed * n_collectors) if E_disp_absorbed > 0 else 0
-
-    # Energía total perdida por el colector (MJ)
-    energy_loss_total = 0.0
-    for i in range(len(df)):
-        Ti = Ti_list[i]
-        Ta = Ta_list[i]
-        loss_total = UL * (Ti - Ta) * 3600 / 1e6  # MJ/m²·h
-        energy_loss_total += loss_total
-    energy_loss_total *= Ac  # MJ total para el área
+    eta_global = Qu / E_disp if E_disp > 0 else 0
+    eta_global_total = Qu_total / E_disp_total if E_disp_total > 0 else 0
 
     print("\n--- Daily Results ---")
-    print(f"Total solar radiation incident:           {E_disp_incident:.2f} MJ")
-    print(f"Total thermal energy absorbed (S * A):    {E_disp_absorbed:.2f} MJ")
-    print(f"Total useful gain per m²:                   {q_u_total:.2f} MJ/m²")
-    print(f"Total useful heat (1 collector):            {Qu:.2f} MJ")
-    print(f"Total useful heat (all collectors):         {Qu_total:.2f} MJ")
-    print(f"Daily collector efficiency:                 {eta_day:.2%}")
-    print(f"Global efficiency (based on absorbed):     {eta_global:.2%}")
-    print(f"Global efficiency total (all collectors):  {eta_global_total:.2%}")
-    print(f"Total energy lost by the collector:         {energy_loss_total:.2f} MJ")
+    print(f"Total solar radiation:               {IT_total:.2f} MJ/m²")
+    print(f"Total useful gain per m²:            {q_u_total:.2f} MJ/m²")
+    print(f"Total useful heat (1 collector):     {Qu:.2f} MJ")
+    print(f"Total useful heat (all collectors):  {Qu_total:.2f} MJ")
+    print(f"Daily collector efficiency:          {eta_day:.2%}")
+    print(f"\nEnergy available (1 collector):      {E_disp:.2f} MJ")
+    print(f"Energy available (all collectors):   {E_disp_total:.2f} MJ")
+    print(f"Global efficiency (1 collector):     {eta_global:.2%}")
+    print(f"Global efficiency (all collectors):  {eta_global_total:.2%}")
 
 if __name__ == "__main__":
     main()
