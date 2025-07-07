@@ -1,40 +1,37 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-from params import m_dot, Cp, Ac  # Si no los usás acá, podés eliminar esta línea
 
-def plot_irradiance(filename):
-    df = pd.read_csv(filename)
-
-    plt.figure(figsize=(10,5))
-    plt.plot(df["Hour"], df["IT"], marker='o', linestyle='-', color='orange')
-    plt.title("Irradiancia horaria (MJ/m²·h) vs Hora del día")
-    plt.xlabel("Hora del día")
-    plt.ylabel("Irradiancia IT (MJ/m²·h)")
-    plt.grid(True)
-    plt.xticks(range(int(df["Hour"].min()), int(df["Hour"].max())+1))
-    plt.show()
-
-def plot_temperatures():
+def plot_combined(filename, start_hour=0, end_hour=24):
     df_data = pd.read_csv("solar_data.csv")
     df_results = pd.read_csv("results.csv")
+    df_data = df_data[(df_data["Minute"] >= start_hour * 60) & (df_data["Minute"] < end_hour * 60)].reset_index(drop=True)
+    df_results = df_results[(df_results["Minute"] >= start_hour * 60) & (df_results["Minute"] < end_hour * 60)].reset_index(drop=True)
+    df_irr = pd.read_csv(filename)
+    df_irr = df_irr[(df_irr["Minute"] >= start_hour * 60) & (df_irr["Minute"] < end_hour * 60)].reset_index(drop=True)
 
-    Ti = df_results["Ti"]   # Directo de results.csv
-    To = df_results["To [°C]"]   # Directo de results.csv
-    hours = df_results["Hour"].astype(int)
+    hours_data = df_results["Minute"] / 60
 
-    plt.figure(figsize=(8, 4))
-    plt.plot(hours, Ti, marker='o', linestyle='-', label='Inlet Temperature Ti (°C)', color='blue')
-    plt.plot(hours, To, marker='x', linestyle='--', label='Outlet Temperature To (°C)', color='red')
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
-    plt.title("Inlet and Outlet Water Temperature")
-    plt.xlabel("Hour of Day")
-    plt.ylabel("Temperature (°C)")
-    plt.xticks(hours)
-    plt.grid(True)
-    plt.legend()
+    # Gráfico de temperaturas (solo líneas)
+    ax1.plot(hours_data, df_results["Ti"], linestyle='-', label='Inlet Temperature Ti (°C)', color='blue')
+    ax1.plot(hours_data, df_results["To [°C]"], linestyle='--', label='Outlet Temperature To (°C)', color='red')
+    ax1.plot(hours_data, df_data["Ta"], linestyle=':', label='Ambient Temperature Ta (°C)', color='green')
+    ax1.set_ylabel("Temperatura (°C)")
+    ax1.set_title(f"Temperaturas entre {start_hour} y {end_hour} horas")
+    ax1.legend()
+    ax1.grid(True)
+
+    # Gráfico de irradiancia (solo línea)
+    ax2.plot(df_irr["Minute"] / 60, df_irr["IT"], linestyle='-', color='orange')
+    ax2.set_xlabel("Hora del día")
+    ax2.set_ylabel("Irradiancia IT (MJ/m²·h)")
+    ax2.set_title(f"Irradiancia (MJ/m²·h) entre {start_hour} y {end_hour} horas")
+    ax2.grid(True)
+    ax2.set_xticks(range(start_hour, end_hour + 1))
+
     plt.tight_layout()
     plt.show()
 
 if __name__ == "__main__":
-    plot_temperatures()
-    plot_irradiance("solar_data.csv")
+    plot_combined("solar_data.csv", start_hour=0, end_hour=24)

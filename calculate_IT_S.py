@@ -3,13 +3,13 @@ import pandas as pd
 from math import pi
 
 # Constantes
-I_sc = 1367 # Cambiar este valor por el tabulado de irradiación solar para cada mes EL H Y EL R
+I_sc = 1367  # Irradiación solar extraatmosférica
 tau_alpha = 0.85
 R = 0.89
 
 def get_n(dia, mes):
     meses_dias_acum = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
-    return meses_dias_acum[mes-1] + dia
+    return meses_dias_acum[mes - 1] + dia
 
 def get_delta(n):
     B = (pi / 180) * ((n - 1) * 360 / 365)
@@ -24,8 +24,8 @@ def get_delta(n):
     )
 
 def get_omega(t_min):
-    omega_dot = 15 / 60
-    omega_0 = -90 - 6 * 60 * omega_dot
+    omega_dot = 15 / 60  # grados por minuto
+    omega_0 = -90 - 6 * 60 * omega_dot  # 6 horas antes del mediodía
     omega_deg = omega_0 + omega_dot * t_min
     return np.radians(omega_deg)
 
@@ -51,49 +51,66 @@ def irradiance_from_altitude(alpha_deg, n):
     return I
 
 def generate_IT_S_csv(
-    dia=15, mes=1, phi_deg=-27, start_hour=0, end_hour=23,
-    interval_min=60, input_csv="solar_data.csv"
+    dia=15, mes=1, phi_deg=-27,
+    start_hour=0, end_hour=23, interval_min=15,
+    input_csv="solar_data.csv"
 ):
-    # Leer los valores de Ta y Ti existentes
-    df_prev = pd.read_csv(input_csv)
-    Ta = df_prev["Ta"].values
-    Ti = df_prev["Ti"].values
+    # Leer archivo anterior para recuperar Ta y Ti (si hay)
+    try:
+        df_prev = pd.read_csv(input_csv)
+        Ta_prev = df_prev["Ta"].values
+        Ti_prev = df_prev["Ti"].values
+    except:
+        Ta_prev = None
+        Ti_prev = None
 
     phi = np.radians(phi_deg)
     n = get_n(dia, mes)
 
-    times = np.arange(start_hour*60, end_hour*60 + interval_min, interval_min)
-    alphas = np.array([get_alt_solar(get_delta(n), phi, get_omega(t)) for t in times])
+    # Generar lista de minutos del día
+    times = np.arange(start_hour * 60, (end_hour + 1) * 60, interval_min)
+
+    # Cálculo solar
+    delta = get_delta(n)
+    omegas = np.array([get_omega(t) for t in times])
+    alphas = np.array([get_alt_solar(delta, phi, omega) for omega in omegas])
     IT_Wm2 = irradiance_from_altitude(alphas, n)
 
     IT_Whm2 = IT_Wm2 * (interval_min / 60)
     IT_MJm2h = IT_Whm2 * 0.0036
 
-    # --- Factor aleatorio para simular nubes ---
-    np.random.seed(5000)  # para reproducibilidad
+    # Perturbación por nubes
+    np.random.seed(5000)
     factor_nubes = np.random.normal(loc=1.0, scale=0.1, size=IT_MJm2h.shape)
-    factor_nubes = np.clip(factor_nubes, 0.4, 1.0)  # limitar entre 0.4 y 1.0
-
-    IT_MJm2h *= factor_nubes  # aplicar perturbación
-
-    # --- Factor aleatorio para simular fluctuaciones en Ta ---
-    factor_Ta = np.random.normal(loc=1.0, scale=0.02, size=Ta.shape)
-    factor_Ta = np.clip(factor_Ta, 0.95, 1.05)  # limitar entre 0.95 y 1.05
-    Ta_perturbado = Ta * factor_Ta
+    factor_nubes = np.clip(factor_nubes, 0.4, 1.0)
+    IT_MJm2h *= factor_nubes
 
     S_MJm2h = IT_MJm2h * tau_alpha * R
 
+    # Perturbación térmica (si había archivo anterior)
+    if Ta_prev is not None:
+        Ta_interp = np.interp(times, np.linspace(0, 1440, len(Ta_prev)), Ta_prev)
+        factor_Ta = np.random.normal(loc=1.0, scale=0.02, size=Ta_interp.shape)
+        factor_Ta = np.clip(factor_Ta, 0.95, 1.05)
+        Ta = np.round(Ta_interp * factor_Ta, 1)
+    else:
+        Ta = np.linspace(18, 26, len(times))  # día genérico
+
+    # Inicializar Ti igual a Ta
+    Ti = Ta.copy()
+
+    # Crear dataframe
     df = pd.DataFrame({
-        "Hour": (times / 60).astype(int),
-        "Ta": np.round(Ta_perturbado, 1),  # ahora con fluctuación
+        "Minute": times,
+        "Ta": Ta,
         "IT": np.round(IT_MJm2h, 4),
         "S": np.round(S_MJm2h, 4),
-        "Ti": np.round(Ti, 1)
+        "Ti": Ti
     })
 
     df.to_csv("solar_data.csv", index=False)
-    print("Archivo 'solar_data.csv' actualizado con irradiancia, radiación absorbida y Ta fluctuante.")
-    print(df)
+    print(f"CSV generado con intervalos de {interval_min} minutos.")
+    print(df.head())
 
 if __name__ == "__main__":
-    generate_IT_S_csv(dia=15, mes=1, phi_deg=-27, start_hour=0, end_hour=23)
+    generate_IT_S_csv(dia=15, mes=6, phi_deg=-27, interval_min=15)

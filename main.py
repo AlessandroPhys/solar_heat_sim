@@ -2,45 +2,58 @@ import math
 import pandas as pd
 import numpy as np
 
-# ----- Parámetros físicos constantes modificados para mejorar rendimiento -----
-k = 209.30                   # [W/m·K] aluminio (igual)
-delta = 0.002               # [m] espesor realista de placa metálica (igual)
-kd = k * delta              # [W/m²·K] conductividad térmica de la placa metálica (igual)
+# ----- Constantes y parámetros -----
+k = 209.30
+delta = 0.02
+kd = k * delta
 print(f"Conductividad térmica de la placa metálica: {kd:.2f} W/m²·K")
-W = 0.1                     # [m] (igual)
-D = 0.02                    # [m] (igual)
-hc = 1000.0                 # [W/m²·K] (igual)
-m_dot = 0.03                # [kg/s] aumento flujo másico para captar más energía
-Cp = 4190.0                 # [J/kg·K] (igual)
-Ac = 2.0                    # [m²] (igual)
 
-sigma = 5.670374419e-8      # [W/m²·K⁴] (igual)
-epsilon = 0.85              # [–] policarbonato alveolar (igual)
-k_insul = 0.03              # [W/m·K] mejor aislante (antes 0.04)
-thickness_insul = 0.0254    # [m] aumenté espesor a 5 cm (antes 3 cm)
-U_b = k_insul / thickness_insul
-viento = 0.2                # menos viento, menos pérdida por convección
-h_conv = 5.7 + 3.8 * viento
+W = 0.1
+D = 0.02
+hc = 1000.0
+m_dot = 0.05
+Cp = 4190.0
+Ac = 1.2
 
-n_collectors = 1
+sigma = 5.670374419e-8
+epsilon = 0.85
 
+t_insul = 0.0254
+k_insul = 0.03
+U_b = k_insul / t_insul
+
+tasa_viento = 0.2
+h_conv = 5.7 + 3.8 * tasa_viento
+
+k_insul_lat = 0.200
+t_insul_lat = 0.025
+
+largo = 1.5
+ancho = 0.8
+espesor_colector = 0.075
+A_abs = largo * ancho
+perimetro = 2 * (largo + ancho)
+
+k_air = 0.0293
+nu = 196e-6
+Pr = 0.7
 
 def calculate_UL(Tp_list, Ta_list,
                  epsilon_p=0.9, epsilon_c=0.88,
-                 hw=2.0,
-                 hc_pc=5.7,
+                 hw=2.0, hc_pc=5.7,
                  k_insul=0.02, thickness_insul=0.07,
-                 k_insul_lat=0.02, thickness_insul_lat=0.04,
-                 A_abs=2.0, A_lat=0.5,
+                 k_insul_lat=0.045, thickness_insul_lat=0.025,
+                 largo=1.5, ancho=0.8, t=0.075,
                  max_iter=100, tol=0.01):
 
-    sigma = 5.670374419e-8  # W/m²·K⁴
+    sigma = 5.670374419e-8
     UL_array = []
+    Ac = largo * ancho
+    perimetro = 2 * (largo + ancho)
 
     for Tp_C, Ta_C in zip(Tp_list, Ta_list):
         Tp = Tp_C + 273.15
         Ta = Ta_C + 273.15
-
         Tc = Tp - 5
 
         for _ in range(max_iter):
@@ -48,7 +61,7 @@ def calculate_UL(Tp_list, Ta_list,
             hr_pc = sigma * (Tp + Tc) * (Tp**2 + Tc**2) / denom_pc
             h_pc_total = hc_pc + hr_pc
 
-            denom_ca = (1 / epsilon_c) + 1 - 1
+            denom_ca = (1 / epsilon_c)
             hr_ca = sigma * (Tc + Ta) * (Tc**2 + Ta**2) / denom_ca
             hc_ca = 5.7 + 3.8 * hw
             h_ca_total = hr_ca + hc_ca
@@ -61,29 +74,19 @@ def calculate_UL(Tp_list, Ta_list,
             Tc = Tc_new
 
         Ub = k_insul / thickness_insul
-        Us = (k_insul_lat / thickness_insul_lat) * (A_lat / A_abs)
+        Ue = (k_insul_lat / thickness_insul_lat) * (perimetro * t / Ac)
 
-        UL_total = Ut + Ub + Us
-
-        print(f"Tp: {Tp_C:.2f} °C, Ta: {Ta_C:.2f} °C, UL_total: {UL_total:.2f} W/m²·K")
+        UL_total = Ut + Ub + Ue
         UL_array.append(UL_total)
 
     return UL_array
 
-
 def calculate_FR(UL_array):
-    F_array = []
-    Fp_array = []
-    Fpp_array = []
     FR_array = []
-    hfi = 3852  # W/m²·K
-    Cb = 10000  # W/m²·K (valor asumido alto)
+    hfi = 3852
 
     for UL in UL_array:
         if UL <= 0:
-            F_array.append(0)
-            Fp_array.append(0)
-            Fpp_array.append(0)
             FR_array.append(0)
             continue
 
@@ -93,103 +96,105 @@ def calculate_FR(UL_array):
 
         denom = UL * W * (
             (1 / (UL * (D + (W - D) * F))) +
-            (1 / Cb) +
             (1 / (math.pi * D * hfi))
         )
         Fp = 1 / denom
-
-        print(f"UL: {UL:.2f} W/m²·K, F: {F:.4f}, Fp: {Fp:.4f}")
 
         num = m_dot * Cp
         den = Fp * UL * Ac
         Fpp = (num / den) * (1 - math.exp(-den / num))
         FR = Fp * Fpp
 
-        F_array.append(F)
-        Fp_array.append(Fp)
-        Fpp_array.append(Fpp)
         FR_array.append(FR)
 
     return FR_array
 
-
-def main(start_hour=7, end_hour=16):
+def main(start_minute=0, end_minute=1440, initial_Ti=None):
     df = pd.read_csv("solar_data.csv")
-    df = df[(df["Hour"] >= start_hour) & (df["Hour"] < end_hour)].reset_index(drop=True)
+    df = df[(df["Minute"] >= start_minute) & (df["Minute"] < end_minute)].reset_index(drop=True)
 
     Ta_list = df["Ta"].values
     IT_list = df["IT"].values
     S_list = df["S"].values
-    Ti_list = df["Ti"].values
-    hour_list = df["Hour"].values
-    Tp_list = (Ti_list + Ta_list) / 2
-    UL_array = calculate_UL(Tp_list, Ta_list)
-    FR_array = calculate_FR(UL_array)
+    time_list = df["Minute"].values
 
-    results = []
+    interval_minutes = df["Minute"].iloc[1] - df["Minute"].iloc[0]
+    interval_seconds = interval_minutes * 60
+
+    Ti_list = np.zeros_like(Ta_list)
+    Ti_list[0] = Ta_list[0]
+
     q_u_total = 0.0
     IT_total = 0.0
+    Tp_list = []
+    results = []
 
     for i in range(len(df)):
-        hour = int(hour_list[i])
+        Tp_init_list = (Ti_list[:i+1] + Ta_list[:i+1]) / 2
+        UL_array = calculate_UL(Tp_init_list, Ta_list[:i+1])
+        FR_array = calculate_FR(UL_array)
+
+        minute = int(time_list[i])
         Ta = Ta_list[i]
         IT = IT_list[i]
         S = S_list[i]
-        Ti = Ti_list[i]
 
-        UL = UL_array[i]
-        FR = FR_array[i]
-        loss_total = UL * (Ti - Ta) * 3600 / 1e6
+        UL = UL_array[-1]
+        FR = FR_array[-1]
 
-        Qu = Ac * FR * ( S - loss_total)  # MJ/m²·h
-        print(f"Hour {hour}: Ta = {Ta:.2f} °C, IT = {IT:.2f} MJ/m²·h, S = {S:.2f} MJ/m²·h, Ti = {Ti:.2f} °C, UL = {UL:.2f} W/m²·K, FR = {FR:.4f}, Loss Total = {loss_total:.3f} MJ/m²·h")
-
-        q_u = Qu / Ac  # MJ/m²·h
-        if q_u < 0:
-            q_u = 0
+        Ti_prev = Ti_list[i-1] if i > 0 else Ti_list[0]
+        loss_total = UL * (Ti_prev - Ta) * interval_seconds / 1e6
+        Qu = Ac * FR * (S - loss_total)
+        q_u = Qu / Ac
         eta = q_u / IT if IT > 0 else 0
-        To = Ti + (q_u * 1e6) / (m_dot * Cp * 3600)
-        print(f"Hour {hour}: q_u = {q_u:.3f} MJ/m²·h, eta = {eta:.3%}, delta_T = {To:.2f} °C")
+        To = Ti_prev + (q_u * 1e6) / (m_dot * Cp * interval_seconds)
+
+        if i < len(df) - 1:
+            alpha_a = 0.8  # Por ejemplo, 80% del agua recircula y 20% es fresca
+            Ti_list[i+1] = alpha_a * To + (1 - alpha_a) * Ta
+
+
+        Tp = Ta + (S - q_u) / UL if (UL > 0 and q_u > 0) else Ta
+        Tp_list.append(Tp)
+
+        results.append({
+            "Minute": minute,
+            "Ta": round(Ta, 1),
+            "Ti": round(Ti_list[i], 1),
+            "UL_total [W/m²K]": round(UL, 2),
+            "FR": round(FR, 4),
+            "Loss Total [MJ/m²]": round(loss_total, 3),
+            "q_u [MJ/m²]": round(q_u, 3),
+            "Efficiency η": round(eta, 3),
+            "To [°C]": round(To, 2),
+            "Tp [°C]": round(Tp, 2)
+        })
 
         q_u_total += q_u
         IT_total += IT
 
-        results.append({
-            "Hour": hour,
-            "Ta": round(Ta, 2),
-            "Ti": round(Ti, 2),
-            "UL_total [W/m²K]": round(UL, 2),
-            "FR": round(FR, 4),
-            "Loss Total [MJ/m²·h]": round(loss_total, 3),
-            "q_u [MJ/m²·h]": round(q_u, 3),
-            "Efficiency η": round(eta, 3),
-            "To [°C]": round(To, 2)
-        })
-
-    pd.DataFrame(results).to_csv("results.csv", index=False)
+    df_results = pd.DataFrame(results)
+    df_results.to_csv("results.csv", index=False)
+    print("\n--- Tabla exportada: results.csv ---")
 
     eta_day = q_u_total / IT_total if IT_total > 0 else 0
-
-    Qu = q_u_total * Ac
-
+    Qu_total = q_u_total * Ac
     E_disp = IT_total * Ac
-
-    eta_global = Qu / E_disp if E_disp > 0 else 0
-
-
-    
+    eta_global = Qu_total / E_disp if E_disp > 0 else 0
 
     print("\n--- Daily Results ---")
     print(f"Total solar radiation:               {IT_total:.2f} MJ/m²")
     print(f"Total useful gain per m²:            {q_u_total:.2f} MJ/m²")
-    print(f"Total useful heat (1 collector):     {Qu:.2f} MJ")
+    print(f"Total useful heat (1 collector):     {Qu_total:.2f} MJ")
     print(f"Daily collector efficiency:          {eta_day:.2%}")
     print(f"\nEnergy available (1 collector):      {E_disp:.2f} MJ")
     print(f"Global efficiency (1 collector):     {eta_global:.2%}")
 
-
-
-
 if __name__ == "__main__":
-    main(0, 24)  # Cambié a 0-24 para todo el día
+    # Primera pasada para estimar la salida al final del día
+    main()
+    df_results_temp = pd.read_csv("results.csv")
+    Ti0 = df_results_temp["To [°C]"].iloc[-1]
 
+    # Segunda pasada con mejor estimación del estado inicial
+    main(initial_Ti=Ti0)
