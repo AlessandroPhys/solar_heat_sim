@@ -5,25 +5,24 @@ import numpy as np
 # ----- Parámetros físicos constantes modificados para mejorar rendimiento -----
 k = 209.30                   # [W/m·K] aluminio (igual)
 delta = 0.002               # [m] espesor realista de placa metálica (igual)
-kd = k * delta          # [W/m²·K] conductividad térmica de la placa metálica (igual)
+kd = k * delta              # [W/m²·K] conductividad térmica de la placa metálica (igual)
 print(f"Conductividad térmica de la placa metálica: {kd:.2f} W/m²·K")
 W = 0.1                     # [m] (igual)
 D = 0.02                    # [m] (igual)
 hc = 1000.0                 # [W/m²·K] (igual)
-m_dot = 0.02                # [kg/s] aumento flujo másico para captar más energía
+m_dot = 0.03                # [kg/s] aumento flujo másico para captar más energía
 Cp = 4190.0                 # [J/kg·K] (igual)
 Ac = 2.0                    # [m²] (igual)
 
 sigma = 5.670374419e-8      # [W/m²·K⁴] (igual)
-epsilon = 0.85               # [–] policarbonato alveolar (igual)
-k_insul = 0.03            # [W/m·K] mejor aislante (antes 0.04)
-thickness_insul = 0.0254      # [m] aumenté espesor a 5 cm (antes 3 cm)
+epsilon = 0.85              # [–] policarbonato alveolar (igual)
+k_insul = 0.03              # [W/m·K] mejor aislante (antes 0.04)
+thickness_insul = 0.0254    # [m] aumenté espesor a 5 cm (antes 3 cm)
 U_b = k_insul / thickness_insul
 viento = 0.2                # menos viento, menos pérdida por convección
 h_conv = 5.7 + 3.8 * viento
 
 n_collectors = 1
-
 
 
 def calculate_UL(Tp_list, Ta_list,
@@ -42,7 +41,6 @@ def calculate_UL(Tp_list, Ta_list,
         Tp = Tp_C + 273.15
         Ta = Ta_C + 273.15
 
-        # Inicializar Tc
         Tc = Tp - 5
 
         for _ in range(max_iter):
@@ -50,13 +48,11 @@ def calculate_UL(Tp_list, Ta_list,
             hr_pc = sigma * (Tp + Tc) * (Tp**2 + Tc**2) / denom_pc
             h_pc_total = hc_pc + hr_pc
 
-            # hr y hc entre cubierto y ambiente
             denom_ca = (1 / epsilon_c) + 1 - 1
             hr_ca = sigma * (Tc + Ta) * (Tc**2 + Ta**2) / denom_ca
             hc_ca = 5.7 + 3.8 * hw
             h_ca_total = hr_ca + hc_ca
 
-            # Nuevo valor de Tc por balance
             Ut = 1 / (1 / h_pc_total + 1 / h_ca_total)
             Tc_new = Tp - Ut * (Tp - Ta) / h_pc_total
 
@@ -64,7 +60,6 @@ def calculate_UL(Tp_list, Ta_list,
                 break
             Tc = Tc_new
 
-        # Calcular Ub y Us
         Ub = k_insul / thickness_insul
         Us = (k_insul_lat / thickness_insul_lat) * (A_lat / A_abs)
 
@@ -76,46 +71,49 @@ def calculate_UL(Tp_list, Ta_list,
     return UL_array
 
 
-
-
 def calculate_FR(UL_array):
     F_array = []
     Fp_array = []
     Fpp_array = []
     FR_array = []
+    hfi = 3852  # W/m²·K
+    Cb = 10000  # W/m²·K (valor asumido alto)
+
     for UL in UL_array:
         if UL <= 0:
-            # Evitar raíz cuadrada de negativo o cero
             F_array.append(0)
             Fp_array.append(0)
             Fpp_array.append(0)
             FR_array.append(0)
             continue
-        
-        hfi = 3852 # [W/m²·K] coeficiente de convección forzado
+
         m = math.sqrt(UL / (k * delta))
         x = m * (W - D) / 2
         F = math.tanh(x) / x if x != 0 else 1.0
-        term1 = 1 / hc
-        term2 = (D / (W - D)) * (1 / (k * delta)) * (1 / F)
-        Fp = (1 / (UL * W)) * (
-        (1 / (UL * (D + (W - D) * F))) +
-        (1 / k_insul) +
-        (1 / (math.pi * D * hfi)))
-        Fp = 0.841 # Valor fijo para simplificar el cálculo
+
+        denom = UL * W * (
+            (1 / (UL * (D + (W - D) * F))) +
+            (1 / Cb) +
+            (1 / (math.pi * D * hfi))
+        )
+        Fp = 1 / denom
+
         print(f"UL: {UL:.2f} W/m²·K, F: {F:.4f}, Fp: {Fp:.4f}")
+
         num = m_dot * Cp
         den = Fp * UL * Ac
         Fpp = (num / den) * (1 - math.exp(-den / num))
         FR = Fp * Fpp
+
         F_array.append(F)
         Fp_array.append(Fp)
         Fpp_array.append(Fpp)
         FR_array.append(FR)
+
     return FR_array
 
 
-def main(start_hour=6, end_hour=18):
+def main(start_hour=7, end_hour=16):
     df = pd.read_csv("solar_data.csv")
     df = df[(df["Hour"] >= start_hour) & (df["Hour"] < end_hour)].reset_index(drop=True)
 
@@ -171,30 +169,27 @@ def main(start_hour=6, end_hour=18):
     pd.DataFrame(results).to_csv("results.csv", index=False)
 
     eta_day = q_u_total / IT_total if IT_total > 0 else 0
+
     Qu = q_u_total * Ac
-    Qu_total = Qu * n_collectors
 
     E_disp = IT_total * Ac
-    E_disp_total = E_disp * n_collectors
 
     eta_global = Qu / E_disp if E_disp > 0 else 0
-    eta_global_total = Qu_total / E_disp_total if E_disp_total > 0 else 0
 
-    delta_T_total = (Qu_total * 1e6) / (n_collectors * m_dot * Cp)
+
+    
 
     print("\n--- Daily Results ---")
     print(f"Total solar radiation:               {IT_total:.2f} MJ/m²")
     print(f"Total useful gain per m²:            {q_u_total:.2f} MJ/m²")
     print(f"Total useful heat (1 collector):     {Qu:.2f} MJ")
-    print(f"Total useful heat (all collectors):  {Qu_total:.2f} MJ")
     print(f"Daily collector efficiency:          {eta_day:.2%}")
     print(f"\nEnergy available (1 collector):      {E_disp:.2f} MJ")
-    print(f"Energy available (all collectors):   {E_disp_total:.2f} MJ")
     print(f"Global efficiency (1 collector):     {eta_global:.2%}")
-    print(f"Global efficiency (all collectors):  {eta_global_total:.2%}")
-    print(f"\nEstimated temperature rise ΔT total: {delta_T_total:.2f} °C")
+
+
 
 
 if __name__ == "__main__":
-    main(0, 24)
+    main(0, 24)  # Cambié a 0-24 para todo el día
 

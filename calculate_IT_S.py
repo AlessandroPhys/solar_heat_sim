@@ -3,7 +3,7 @@ import pandas as pd
 from math import pi
 
 # Constantes
-I_sc = 1367
+I_sc = 1367 # Cambiar este valor por el tabulado de irradiación solar para cada mes EL H Y EL R
 tau_alpha = 0.85
 R = 0.89
 
