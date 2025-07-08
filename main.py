@@ -6,24 +6,21 @@ import numpy as np
 k = 209.30
 delta = 0.02
 kd = k * delta
-print(f"Conductividad térmica de la placa metálica: {kd:.2f} W/m²·K")
 
 W = 0.1
 D = 0.02
 hc = 1000.0
-m_dot = 0.05
+m_dot = 0.03
 Cp = 4190.0
 Ac = 1.2
 
 sigma = 5.670374419e-8
 epsilon = 0.85
 
-t_insul = 0.0254
+t_insul = 0.2
 k_insul = 0.03
-U_b = k_insul / t_insul
 
 tasa_viento = 0.2
-h_conv = 5.7 + 3.8 * tasa_viento
 
 k_insul_lat = 0.200
 t_insul_lat = 0.025
@@ -34,10 +31,6 @@ espesor_colector = 0.075
 A_abs = largo * ancho
 perimetro = 2 * (largo + ancho)
 
-k_air = 0.0293
-nu = 196e-6
-Pr = 0.7
-
 def calculate_UL(Tp_list, Ta_list,
                  epsilon_p=0.9, epsilon_c=0.88,
                  hw=2.0, hc_pc=5.7,
@@ -46,7 +39,6 @@ def calculate_UL(Tp_list, Ta_list,
                  largo=1.5, ancho=0.8, t=0.075,
                  max_iter=100, tol=0.01):
 
-    sigma = 5.670374419e-8
     UL_array = []
     Ac = largo * ancho
     perimetro = 2 * (largo + ancho)
@@ -83,7 +75,7 @@ def calculate_UL(Tp_list, Ta_list,
 
 def calculate_FR(UL_array):
     FR_array = []
-    hfi = 3852
+    hfi = 300
 
     for UL in UL_array:
         if UL <= 0:
@@ -114,15 +106,15 @@ def main(start_minute=0, end_minute=1440, initial_Ti=None):
     df = df[(df["Minute"] >= start_minute) & (df["Minute"] < end_minute)].reset_index(drop=True)
 
     Ta_list = df["Ta"].values
-    IT_list = df["IT"].values
-    S_list = df["S"].values
+    IT_list = df["IT"].values  # MJ/m² por intervalo
+    S_list = df["S"].values    # MJ/m² por intervalo
     time_list = df["Minute"].values
 
     interval_minutes = df["Minute"].iloc[1] - df["Minute"].iloc[0]
     interval_seconds = interval_minutes * 60
 
     Ti_list = np.zeros_like(Ta_list)
-    Ti_list[0] = Ta_list[0]
+    Ti_list[0] = Ta_list[0] if initial_Ti is None else initial_Ti
 
     q_u_total = 0.0
     IT_total = 0.0
@@ -143,18 +135,23 @@ def main(start_minute=0, end_minute=1440, initial_Ti=None):
         FR = FR_array[-1]
 
         Ti_prev = Ti_list[i-1] if i > 0 else Ti_list[0]
-        loss_total = UL * (Ti_prev - Ta) * interval_seconds / 1e6
-        Qu = Ac * FR * (S - loss_total)
-        q_u = Qu / Ac
-        eta = q_u / IT if IT > 0 else 0
+        loss_total = UL * (Ti_prev - Ta) * interval_seconds / 1e6  # MJ/m²
+        Qu = Ac * FR * (S - loss_total)  # MJ
+        q_u = Qu / Ac                    # MJ/m²
+        # Eficiencia limitada al rango [0, 1]
+        if IT > 0:
+            eta = q_u / IT
+            eta = max(0, min(eta, 1))
+        else:
+            eta = 0
+
         To = Ti_prev + (q_u * 1e6) / (m_dot * Cp * interval_seconds)
 
         if i < len(df) - 1:
-            alpha_a = 0.8  # Por ejemplo, 80% del agua recircula y 20% es fresca
+            alpha_a = 0.8
             Ti_list[i+1] = alpha_a * To + (1 - alpha_a) * Ta
 
-
-        Tp = Ta + (S - q_u) / UL if (UL > 0 and q_u > 0) else Ta
+        Tp = Ta + (S - q_u) * 1e6 / (UL * interval_seconds) if (UL > 0 and q_u > 0) else Ta
         Tp_list.append(Tp)
 
         results.append({
@@ -191,10 +188,7 @@ def main(start_minute=0, end_minute=1440, initial_Ti=None):
     print(f"Global efficiency (1 collector):     {eta_global:.2%}")
 
 if __name__ == "__main__":
-    # Primera pasada para estimar la salida al final del día
     main()
     df_results_temp = pd.read_csv("results.csv")
     Ti0 = df_results_temp["To [°C]"].iloc[-1]
-
-    # Segunda pasada con mejor estimación del estado inicial
     main(initial_Ti=Ti0)

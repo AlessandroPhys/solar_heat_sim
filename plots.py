@@ -11,9 +11,9 @@ def plot_combined(filename, start_hour=0, end_hour=24):
 
     hours_data = df_results["Minute"] / 60
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
 
-    # Gráfico de temperaturas (solo líneas)
+    # Gráfico de temperaturas
     ax1.plot(hours_data, df_results["Ti"], linestyle='-', label='Inlet Temperature Ti (°C)', color='blue')
     ax1.plot(hours_data, df_results["To [°C]"], linestyle='--', label='Outlet Temperature To (°C)', color='red')
     ax1.plot(hours_data, df_data["Ta"], linestyle=':', label='Ambient Temperature Ta (°C)', color='green')
@@ -22,13 +22,19 @@ def plot_combined(filename, start_hour=0, end_hour=24):
     ax1.legend()
     ax1.grid(True)
 
-    # Gráfico de irradiancia (solo línea)
+    # Gráfico de irradiancia
     ax2.plot(df_irr["Minute"] / 60, df_irr["IT"], linestyle='-', color='orange')
-    ax2.set_xlabel("Hora del día")
-    ax2.set_ylabel("Irradiancia IT (MJ/m²·h)")
-    ax2.set_title(f"Irradiancia (MJ/m²·h) entre {start_hour} y {end_hour} horas")
+    ax2.set_ylabel("Irradiancia IT (MJ/m²·intervalo)")
+    ax2.set_title(f"Irradiancia solar entre {start_hour} y {end_hour} horas")
     ax2.grid(True)
-    ax2.set_xticks(range(start_hour, end_hour + 1))
+
+    # Gráfico de eficiencia instantánea
+    ax3.plot(hours_data, df_results["Efficiency η"], linestyle='-', color='purple')
+    ax3.set_xlabel("Hora del día")
+    ax3.set_ylabel("Eficiencia Instantánea η")
+    ax3.set_title("Eficiencia instantánea del colector")
+    ax3.grid(True)
+    ax3.set_xticks(range(start_hour, end_hour + 1))
 
     plt.tight_layout()
     plt.show()
