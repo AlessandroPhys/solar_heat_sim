@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from math import pi
+from params import dia, mes, phi_deg, interval_min, realism_IT
 
 I_sc = 1367  # Irradiación solar extraatmosférica (W/m²)
 
@@ -53,6 +54,51 @@ def apply_cloudiness_variation(IT_array, block_size=60, low=0.91, high=1.04):
 
     return IT_mod
 
+##########
+def add_white_noise(IT_array, std_dev=0.02):
+    noise = np.random.normal(loc=1.0, scale=std_dev, size=len(IT_array))
+    return IT_array * noise
+
+def apply_cloud_blocks(IT_array, block_size=20, low=0.6, high=0.95):
+    IT_mod = IT_array.copy()
+    n_blocks = len(IT_array) // block_size
+    for i in range(n_blocks):
+        factor = np.random.uniform(low, high)
+        start = i * block_size
+        end = start + block_size
+        IT_mod[start:end] *= factor
+    return IT_mod
+
+def add_cirrus_effect(IT_array, amplitude=0.05, freq=3):
+    x = np.linspace(0, 2 * np.pi * freq, len(IT_array))
+    wave = 1 + amplitude * np.sin(x + np.random.rand() * 2 * np.pi)
+    return IT_array * wave
+
+def apply_shadow_spikes(IT_array, num_spikes=5, depth=0.4, duration=2):
+    IT_mod = IT_array.copy()
+    for _ in range(num_spikes):
+        idx = np.random.randint(0, len(IT_array) - duration)
+        IT_mod[idx:idx+duration] *= depth
+    return IT_mod
+
+def apply_morning_evening_fog(IT_array, fade_len=20, min_factor=0.6):
+    IT_mod = IT_array.copy()
+    fade = np.linspace(min_factor, 1.0, fade_len)
+    IT_mod[:fade_len] *= fade
+    IT_mod[-fade_len:] *= fade[::-1]
+    return IT_mod
+
+def apply_all_effects(IT_array):
+    r = int(25/interval_min)
+    IT = IT_array.copy()
+    IT = add_white_noise(IT, std_dev=r/100)
+    #IT = apply_cloud_blocks(IT, block_size=interval_min*2, low=0.7, high=1) # Dia parcialmente nublado
+    IT = apply_cloud_blocks(IT, block_size=r, low=0.8, high=1) # Muy pocas nubes
+    #IT = apply_cloud_blocks(IT, block_size=interval_min, low=0.7, high=1) # Dia nublado
+    #IT = apply_cloud_blocks(IT, block_size=interval_min, low=1, high=1) # Dia despejado
+    #IT = apply_shadow_spikes(IT, num_spikes=1, depth=0.5, duration=1) # pajarito se posa sobre le sensor xd
+    return IT
+########
 
 def generate_IT_S_csv(dia=21, mes=12, phi_deg=-27, interval_min=15):
     H_horizontal = {1: 6.5, 2: 6, 3: 5.0, 4: 4.0, 5: 3.0, 6: 2.5,
@@ -60,7 +106,7 @@ def generate_IT_S_csv(dia=21, mes=12, phi_deg=-27, interval_min=15):
     R_values = {1: 0.89, 2: 0.95, 3: 1.04, 4: 1.15, 5: 1.30, 6: 1.35,
                 7: 1.33, 8: 1.20, 9: 1.07, 10: 0.97, 11: 0.91, 12: 0.88}
 
-    tau_alpha_local = 0.9
+    tau_alpha_local = 0.783
     H_mes = H_horizontal[mes]
     R_mes = R_values[mes]
     S_deseado = tau_alpha_local * R_mes * H_mes * 3.6e6
@@ -85,35 +131,22 @@ def generate_IT_S_csv(dia=21, mes=12, phi_deg=-27, interval_min=15):
 
     IT_Jm2_interval = IT_Wm2 * interval_min * 60
     IT_MJm2 = IT_Jm2_interval / 1e6
-    IT_MJm2 = apply_cloudiness_variation(IT_MJm2, block_size=1, low=0.73, high=1.12)
-    S_MJm2 = IT_MJm2 * tau_alpha_local * R_mes
 
-    df_data= pd.read_csv("solar_data.csv")
-    Ti = df_data["Ti"]
-    Ta = df_data["Ta"]
+    IT_MJm2 = apply_all_effects(IT_MJm2) if realism_IT == 1 else IT_MJm2
+
+    S_MJm2 = IT_MJm2 * tau_alpha_local
     
-    print(IT_MJm2)
-    print(S_MJm2)
     df = pd.DataFrame({
         "Minute": times_min,
-        "Ta": Ta,
+       
         "IT": np.round(IT_MJm2, 6),
         "S": np.round(S_MJm2, 6),
-        "Ti": Ti
+
     })
 
     df.to_csv("solar_data.csv", index=False)
     print(f"CSV generado con intervalos de {interval_min} minutos.")
 
-    plt.figure(figsize=(10,5))
-    plt.plot(times_min/60, IT_MJm2, label='Irradiancia (MJ/m² por intervalo)')
-    plt.xlabel('Hora del día [h]')
-    plt.ylabel('Energía solar [MJ/m²]')
-    plt.title(f'Irradiancia solar el día {dia}/{mes}')
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
 
     intervals_per_hour = int(60 / interval_min)
     hours = np.arange(0, 24)
@@ -123,11 +156,10 @@ def generate_IT_S_csv(dia=21, mes=12, phi_deg=-27, interval_min=15):
         end_idx = start_idx + intervals_per_hour
         energy_h = np.sum(IT_MJm2[start_idx:end_idx])
         energy_per_hour.append(energy_h)
+    print(len(S_MJm2))
 
-    print("\nEnergía solar por hora (MJ/m²):")
-    print("Hora\tEnergía [MJ/m²]")
-    for h, energy_h in zip(hours, energy_per_hour):
-        print(f"{h:02d}:00\t{energy_h:.4f}")
+    
 
 if __name__ == "__main__":
-    generate_IT_S_csv(dia=21, mes=12, phi_deg=-27, interval_min=15)
+     # Leer parámetros desde archivo CSV
+    generate_IT_S_csv(dia, mes, phi_deg, interval_min)
